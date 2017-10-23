@@ -123,7 +123,9 @@ class WaveformView(ManualClusteringView):
             else:
                 x = -1.
             for i, ch in enumerate(channel_ids):
-                label = (self.channel_labels[i]
+                # label = (self.channel_labels[i]
+                #          if self.channel_labels is not None else ch)
+                label = (self.channel_labels[ch]
                          if self.channel_labels is not None else ch)
                 self[i].text(pos=[x, 0.],
                              text=str(label),
