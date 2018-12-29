@@ -338,3 +338,162 @@ class WaveformLoader(object):
 
     def __getitem__(self, spike_ids):
         return self.get(spike_ids)
+
+
+#------------------------------------------------------------------------------
+# Waveform loader from trace snippets at detected spike times
+# (used in the manual sorting GUI)
+#------------------------------------------------------------------------------
+
+class WaveformSnippetLoader(object):
+    """Load waveforms from filtered or unfiltered snippets"""
+
+    def __init__(self,
+                 snippets=None,
+                 sample_rate=None,
+                 spike_samples=None,
+                 filter_order=None,
+                 n_samples_waveforms=None,
+                 ):
+
+        # Traces.
+        if snippets is not None:
+            self.snippets = snippets
+            self.n_samples_trace, self.n_channels = traces.shape
+        else:
+            self._snippets = None
+            self.n_samples_trace = self.n_channels = 0
+
+        assert spike_samples is not None
+        self._spike_samples = spike_samples
+        self.n_spikes = len(spike_samples)
+
+        # Define filter.
+        if filter_order:
+            filter_margin = filter_order * 3
+            b_filter = bandpass_filter(rate=sample_rate,
+                                       low=500.,
+                                       high=sample_rate * .475,
+                                       order=filter_order,
+                                       )
+            self._filter = lambda x, axis=0: apply_filter(x, b_filter,
+                                                          axis=axis)
+        else:
+            filter_margin = 0
+            self._filter = lambda x, axis=0: x
+
+        # Number of samples to return, can be an int or a
+        # tuple (before, after).
+        assert n_samples_waveforms is not None
+        self.n_samples_before_after = _before_after(n_samples_waveforms)
+        self.n_samples_waveforms = sum(self.n_samples_before_after)
+        # Number of additional samples to use for filtering.
+        self._filter_margin = _before_after(filter_margin)
+        # Number of samples in the extracted raw data chunk.
+        self._n_samples_extract = (self.n_samples_waveforms +
+                                   sum(self._filter_margin))
+
+        self.dtype = np.float32
+        self.shape = (self.n_spikes, self._n_samples_extract, self.n_channels)
+        self.ndim = 3
+
+    @property
+    def snippets(self):
+        """Raw traces."""
+        return self._snippets
+
+    @snippets.setter
+    def snippets(self, value):
+        self.n_samples_trace, self.n_channels = value.shape
+        self._snippets = value
+
+    @property
+    def spike_samples(self):
+        return self._spike_samples
+
+    def _load_at(self, time):
+        """Load a waveform at a given time."""
+        time = int(time)
+        time_o = time
+        ns = self.n_samples_trace
+        if not (0 <= time_o < ns):
+            raise ValueError("Invalid time {0:d}/{1:d}.".format(time_o, ns))
+        slice_extract = _slice(time_o,
+                               self.n_samples_before_after,
+                               self._filter_margin)
+        extract = self._snippets[slice_extract].astype(np.float32)
+
+        # Pad the extracted chunk if needed.
+        if slice_extract.start <= 0:
+            extract = _pad(extract, self._n_samples_extract, 'left')
+        elif slice_extract.stop >= ns - 1:
+            extract = _pad(extract, self._n_samples_extract, 'right')
+
+        assert extract.shape[0] == self._n_samples_extract
+        return extract
+
+    def get(self, spike_ids):
+        """Load the waveforms of the specified spikes."""
+        if isinstance(spike_ids, slice):
+            spike_ids = _range_from_slice(spike_ids,
+                                          start=0,
+                                          stop=self.n_spikes,
+                                          )
+        if not hasattr(spike_ids, '__len__'):
+            spike_ids = [spike_ids]
+        nc = self.n_channels
+
+        # Ensure a list of time samples are being requested.
+        spike_ids = _as_array(spike_ids)
+        n_spikes = len(spike_ids)
+
+        # Initialize the array.
+        # NOTE: last dimension is time to simplify things.
+        shape = (n_spikes, nc, self._n_samples_extract)
+        waveforms = np.zeros(shape, dtype=np.float32)
+
+        # No traces: return null arrays.
+        if self.n_samples_trace == 0:
+            return np.transpose(waveforms, (0, 2, 1))
+
+        # Load all spikes.
+        for i, spike_id in enumerate(spike_ids):
+            assert 0 <= spike_id < self.n_spikes
+            time = self._spike_samples[spike_id]
+
+            # Extract the waveforms on the unmasked channels.
+            try:
+                w = self._load_at(time)
+            except ValueError as e:  # pragma: no cover
+                logger.warn("Error while loading waveform: %s", str(e))
+                continue
+
+            assert w.shape == (self._n_samples_extract, nc)
+
+            waveforms[i, :, :] = w.T
+
+        # Filter the waveforms.
+        waveforms_f = waveforms.reshape((-1, self._n_samples_extract))
+        # Only filter the non-zero waveforms.
+        unmasked = waveforms_f.max(axis=1) != 0
+        waveforms_f[unmasked] = self._filter(waveforms_f[unmasked], axis=1)
+        waveforms_f = waveforms_f.reshape((n_spikes, nc,
+                                           self._n_samples_extract))
+
+        # Remove the margin.
+        margin_before, margin_after = self._filter_margin
+        if margin_after > 0:
+            assert margin_before >= 0
+            waveforms_f = waveforms_f[:, :, margin_before:-margin_after]
+
+        assert waveforms_f.shape == (n_spikes,
+                                     nc,
+                                     self.n_samples_waveforms,
+                                     )
+
+        # NOTE: we transpose before returning the array.
+        return np.transpose(waveforms_f, (0, 2, 1))
+
+    def __getitem__(self, spike_ids):
+        return self.get(spike_ids)
+
