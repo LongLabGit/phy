@@ -359,7 +359,7 @@ class WaveformSnippetLoader(object):
         # Traces.
         if snippets is not None:
             self.snippets = snippets
-            self.n_samples_trace, self.n_channels = traces.shape
+            self.n_samples_trace, self.n_channels = snippets.shape
         else:
             self._snippets = None
             self.n_samples_trace = self.n_channels = 0
@@ -370,7 +370,8 @@ class WaveformSnippetLoader(object):
 
         # Define filter.
         if filter_order:
-            filter_margin = filter_order * 3
+            # filter_margin = filter_order * 3
+            filter_margin = 0 # use scipy default padding
             b_filter = bandpass_filter(rate=sample_rate,
                                        low=500.,
                                        high=sample_rate * .475,
@@ -411,14 +412,16 @@ class WaveformSnippetLoader(object):
     def spike_samples(self):
         return self._spike_samples
 
-    def _load_at(self, time):
-        """Load a waveform at a given time."""
-        time = int(time)
-        time_o = time
+    def _load_nth_spike(self, spike_id):
+        """Load waveform of n-th spike in the recording."""
+        # TODO: this is the key method - update this first and then trace other required changes
+        spike_id = int(spike_id)
         ns = self.n_samples_trace
-        if not (0 <= time_o < ns):
-            raise ValueError("Invalid time {0:d}/{1:d}.".format(time_o, ns))
-        slice_extract = _slice(time_o,
+        wf_samples = self.n_samples_waveforms
+        spike_sample = int((spike_id + 0.5) * wf_samples) # spike time at center
+        if not (0 <= spike_sample < ns):
+            raise ValueError("Invalid time {0:d}/{1:d}.".format(spike_sample, ns))
+        slice_extract = _slice(spike_sample,
                                self.n_samples_before_after,
                                self._filter_margin)
         extract = self._snippets[slice_extract].astype(np.float32)
@@ -459,11 +462,13 @@ class WaveformSnippetLoader(object):
         # Load all spikes.
         for i, spike_id in enumerate(spike_ids):
             assert 0 <= spike_id < self.n_spikes
-            time = self._spike_samples[spike_id]
+            # Here, we don't load spikes at a specific time during the recording
+            # Instead, we load the n-th spike (i.e., spike_id) from the extracted wf file
+            # time = self._spike_samples[spike_id]
 
             # Extract the waveforms on the unmasked channels.
             try:
-                w = self._load_at(time)
+                w = self._load_nth_spike(spike_id)
             except ValueError as e:  # pragma: no cover
                 logger.warn("Error while loading waveform: %s", str(e))
                 continue
