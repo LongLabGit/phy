@@ -542,11 +542,35 @@ def regular_subset(spikes, n_spikes_max=None, offset=0):
     return my_spikes
 
 
+def regular_downsampled_subset(spikes, downsample, n_spikes_max=None):
+    """Prune the current selection to get at most n_spikes_max spikes."""
+    assert spikes is not None
+    # Nothing to do if the selection already satisfies n_spikes_max.
+    if n_spikes_max is None:  # pragma: no cover
+        return spikes
+    # Note: randomly-changing selections are confusing...
+    # spikes are spike IDs; i.e., have to be divisible by downsample factor
+    spikes_ = spikes[np.where(spikes % downsample == 0)]
+    step = int(math.ceil(1.0 * len(spikes_) / n_spikes_max))
+    if step > len(spikes_):
+        step = len(spikes_)
+    if step < 1:
+        step = 1
+    my_spikes = spikes_[:: step][:n_spikes_max]
+    # actually adjust the spike IDs by the downsampling factor
+    # so we can use them to look up the waveform in the downsampled .dat file
+    my_spikes = my_spikes // downsample
+    assert len(my_spikes) <= len(spikes)
+    assert len(my_spikes) <= n_spikes_max
+    return my_spikes
+
+
 def select_spikes(cluster_ids=None,
                   max_n_spikes_per_cluster=None,
                   spikes_per_cluster=None,
                   batch_size=None,
                   subset=None,
+                  downsample=None
                   ):
     """Return a selection of spikes belonging to the specified clusters."""
     subset = subset or 'regular'
@@ -574,6 +598,9 @@ def select_spikes(cluster_ids=None,
                     spike_ids = get_excerpts(spike_ids,
                                              n // batch_size,
                                              batch_size)
+            elif subset == 'regular_downsampled':
+                # Regular subselection using downsampled spike times
+                spike_ids = regular_downsampled_subset(spike_ids, downsample, n_spikes_max=n)
             elif subset == 'random' and len(spike_ids) > n:
                 # Random subselection.
                 spike_ids = np.random.choice(spike_ids, n, replace=False)
@@ -593,6 +620,7 @@ class Selector(object):
                       max_n_spikes_per_cluster=None,
                       batch_size=None,
                       subset=None,
+                      downsample=None,
                       ):
         if cluster_ids is None or not len(cluster_ids):
             return None
@@ -604,6 +632,7 @@ class Selector(object):
                              max_n_spikes_per_cluster=ns,
                              batch_size=batch_size,
                              subset=subset,
+                             downsample=downsample,
                              )
 
 
