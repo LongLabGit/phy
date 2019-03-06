@@ -86,6 +86,7 @@ class FeatureView(ManualClusteringView):
     def __init__(self,
                  features=None,
                  attributes=None,
+                 channel_labels=None,
                  **kwargs):
         self._scaling = None
 
@@ -103,6 +104,7 @@ class FeatureView(ManualClusteringView):
 
         # Channels being shown.
         self.channel_ids = None
+        self.channel_labels = channel_labels
 
         # Attributes: extra features. This is a dictionary
         # {name: array}
@@ -133,7 +135,7 @@ class FeatureView(ManualClusteringView):
         """Return the channel id from a dimension, if applicable."""
         if u(dim[:-1]).isdecimal():
             n = len(self.channel_ids)
-            return str(self.channel_ids[int(dim[:-1]) % n]) + dim[-1]
+            return str(self.channel_labels[self.channel_ids[int(dim[:-1]) % n]]) + dim[-1]
         else:
             return dim
 
